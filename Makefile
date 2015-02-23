@@ -13,7 +13,7 @@ build/container: clean stage/route53-registrator Dockerfile
 	touch build/container
 
 build/route53-registrator: *.go
-	GOOS=linux GOARCH=amd64 go build -o build/route53-registrator
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/route53-registrator
 
 stage/route53-registrator: build/route53-registrator
 	mkdir -p stage
