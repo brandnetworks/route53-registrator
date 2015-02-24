@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/creack/goamz/route53"
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/mitchellh/goamz/aws"
-	"github.com/mitchellh/goamz/route53"
 )
 
 func getopt(name, def string) string {
@@ -114,14 +114,7 @@ func main() {
 		case "start":
 			log.Println("docker start")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				resp, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("CREATE", hostname(*metadataIP), *cname, "CNAME"))
-				log.Println(resp)
-				assert(err)
-			}
-		case "stop":
-			log.Println("docker stop")
-			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("DELETE", hostname(*metadataIP), *cname, "CNAME"))
+				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("CREATE", hostname(*metadataIP), *cname, "CNAME"))
 				assert(err)
 			}
 		case "die":
