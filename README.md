@@ -25,3 +25,8 @@ The program uses the ec2 metadata service to retrieve the hostname for the insta
        some sane defaults
  - `release`:
      - Pushes the latest image to the public docker index (it's tied to my account right now)
+
+
+## A note on `ca-bundle.crt`:
+
+This file contains a set of trusted root certificates obtained from Mozilla [here](http://hg.mozilla.org/releases/mozilla-release/raw-file/default/security/nss/lib/ckfw/builtins/certdata.txt)
