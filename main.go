@@ -70,6 +70,19 @@ func isObservedContainer(client *dockerapi.Client, containerId string, targetCon
 	return false
 }
 
+func recordExists(client *route53.Route53, zone string, recordName string) (record *route53.ResourceRecordSet, err error) {
+	resources, err := client.ListResourceRecordSets(zone, nil)
+	for _, route := range resources.Records {
+		//FQDNs have a trailing dot. Check if that which has been provided
+		//matches the route, irrespective of the trailing dot
+		if strings.TrimRight(route.Name, ".") == strings.TrimRight(recordName, ".") {
+			log.Printf("Match Found")
+			return &route, nil
+		}
+	}
+	return nil, nil
+}
+
 func main() {
 	var containerName = flag.String("container", "docker-registry", "The container to watch")
 	var metadataIP = flag.String("metadata", "169.254.169.254", "The address of the metadata service")
@@ -98,6 +111,25 @@ func main() {
 	auth, err := aws.GetAuth("", "")
 	assert(err)
 	client := route53.New(auth, aws.Regions[*region])
+
+	//check to see if the ResourceRecord exists already.
+	//if it does, then remove it
+	existingRecord, err := recordExists(client, *zoneId, *cname)
+	if err != nil {
+		log.Fatalf("Failed:", err)
+	}
+	if existingRecord != nil {
+		log.Printf("Deleting existing Record")
+		_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
+			Name:    existingRecord.Name,
+			Type:    existingRecord.Type,
+			Records: existingRecord.Records,
+			TTL:     existingRecord.TTL,
+		}))
+		if err != nil {
+			log.Fatalf("Failed to delete existing record:", err)
+		}
+	}
 
 	log.Println("Listening for Docker events ...")
 
