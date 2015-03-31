@@ -40,20 +40,13 @@ func hostname(metadataServerAddress string) (hostname string) {
 	return string(body)
 }
 
-func createResourceRecords(action string, hostname string, name string, recordType string) (req *route53.ChangeResourceRecordSetsRequest) {
+func createModifyResourceRecordsReq(action string, recordSet route53.ResourceRecordSet) (req *route53.ChangeResourceRecordSetsRequest) {
 	return &route53.ChangeResourceRecordSetsRequest{
 		Comment: "Test",
 		Changes: []route53.Change{
 			route53.Change{
 				Action: action,
-				Record: route53.ResourceRecordSet{
-					Name:          name,
-					Type:          recordType,
-					TTL:           5,
-					Records:       []string{hostname},
-					Weight:        50,
-					SetIdentifier: hostname,
-				},
+				Record: recordSet,
 			},
 		},
 	}
@@ -114,13 +107,27 @@ func main() {
 		case "start":
 			log.Println("docker start")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("CREATE", hostname(*metadataIP), *cname, "CNAME"))
+				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("CREATE", route53.ResourceRecordSet{
+					Name:          *cname,
+					Type:          "CNAME",
+					TTL:           5,
+					Records:       []string{hostname(*metadataIP)},
+					Weight:        50,
+					SetIdentifier: hostname(*metadataIP),
+				}))
 				assert(err)
 			}
 		case "die":
 			log.Println("docker die")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("DELETE", hostname(*metadataIP), *cname, "CNAME"))
+				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
+					Name:          *cname,
+					Type:          "CNAME",
+					TTL:           5,
+					Records:       []string{hostname(*metadataIP)},
+					Weight:        50,
+					SetIdentifier: hostname(*metadataIP),
+				}))
 				assert(err)
 			}
 		case "default":
