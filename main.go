@@ -40,20 +40,13 @@ func hostname(metadataServerAddress string) (hostname string) {
 	return string(body)
 }
 
-func createResourceRecords(action string, hostname string, name string, recordType string) (req *route53.ChangeResourceRecordSetsRequest) {
+func createModifyResourceRecordsReq(action string, recordSet route53.ResourceRecordSet) (req *route53.ChangeResourceRecordSetsRequest) {
 	return &route53.ChangeResourceRecordSetsRequest{
 		Comment: "Test",
 		Changes: []route53.Change{
 			route53.Change{
 				Action: action,
-				Record: route53.ResourceRecordSet{
-					Name:          name,
-					Type:          recordType,
-					TTL:           5,
-					Records:       []string{hostname},
-					Weight:        50,
-					SetIdentifier: hostname,
-				},
+				Record: recordSet,
 			},
 		},
 	}
@@ -75,6 +68,19 @@ func isObservedContainer(client *dockerapi.Client, containerId string, targetCon
 	}
 	log.Println("no match")
 	return false
+}
+
+func recordExists(client *route53.Route53, zone string, recordName string) (record *route53.ResourceRecordSet, err error) {
+	resources, err := client.ListResourceRecordSets(zone, nil)
+	for _, route := range resources.Records {
+		//FQDNs have a trailing dot. Check if that which has been provided
+		//matches the route, irrespective of the trailing dot
+		if strings.TrimRight(route.Name, ".") == strings.TrimRight(recordName, ".") {
+			log.Printf("Match Found")
+			return &route, nil
+		}
+	}
+	return nil, nil
 }
 
 func main() {
@@ -106,6 +112,25 @@ func main() {
 	assert(err)
 	client := route53.New(auth, aws.Regions[*region])
 
+	//check to see if the ResourceRecord exists already.
+	//if it does, then remove it
+	existingRecord, err := recordExists(client, *zoneId, *cname)
+	if err != nil {
+		log.Fatalf("Failed:", err)
+	}
+	if existingRecord != nil {
+		log.Printf("Deleting existing Record")
+		_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
+			Name:    existingRecord.Name,
+			Type:    existingRecord.Type,
+			Records: existingRecord.Records,
+			TTL:     existingRecord.TTL,
+		}))
+		if err != nil {
+			log.Fatalf("Failed to delete existing record:", err)
+		}
+	}
+
 	log.Println("Listening for Docker events ...")
 
 	// Process Docker events
@@ -114,13 +139,27 @@ func main() {
 		case "start":
 			log.Println("docker start")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("CREATE", hostname(*metadataIP), *cname, "CNAME"))
+				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("CREATE", route53.ResourceRecordSet{
+					Name:          *cname,
+					Type:          "CNAME",
+					TTL:           5,
+					Records:       []string{hostname(*metadataIP)},
+					Weight:        50,
+					SetIdentifier: hostname(*metadataIP),
+				}))
 				assert(err)
 			}
 		case "die":
 			log.Println("docker die")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createResourceRecords("DELETE", hostname(*metadataIP), *cname, "CNAME"))
+				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
+					Name:          *cname,
+					Type:          "CNAME",
+					TTL:           5,
+					Records:       []string{hostname(*metadataIP)},
+					Weight:        50,
+					SetIdentifier: hostname(*metadataIP),
+				}))
 				assert(err)
 			}
 		case "default":
