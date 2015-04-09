@@ -85,6 +85,21 @@ func findMatchingResourceRecords(client *route53.Route53, zone string, setName s
 	return matching, nil
 }
 
+func createResourceRecordSet(cname string, value string) (resourceRecordSet *route53.ResourceRecordSet) {
+	return &route53.ResourceRecordSet{
+		Name: aws.String(cname),
+		Type: aws.String("CNAME"),
+		ResourceRecords: []*route53.ResourceRecord{
+			&route53.ResourceRecord{
+				Value: aws.String(value),
+			},
+		},
+		SetIdentifier: aws.String(value),
+		TTL:           aws.Long(5),
+		Weight:        aws.Long(50),
+	}
+}
+
 func main() {
 	var containerName = flag.String("container", "docker-registry", "The container to watch")
 	var metadataIP = flag.String("metadata", "169.254.169.254", "The address of the metadata service")
@@ -151,19 +166,8 @@ func main() {
 			if isObservedContainer(docker, msg.ID, targetContainer) {
 				var changes []*route53.Change
 				changes = append(changes, &route53.Change{
-					Action: aws.String("CREATE"),
-					ResourceRecordSet: &route53.ResourceRecordSet{ // Required
-						Name: aws.String(*cname),
-						Type: aws.String("CNAME"),
-						ResourceRecords: []*route53.ResourceRecord{
-							&route53.ResourceRecord{
-								Value: aws.String(hostname(*metadataIP)),
-							},
-						},
-						SetIdentifier: aws.String(hostname(*metadataIP)),
-						TTL:           aws.Long(5),
-						Weight:        aws.Long(50),
-					},
+					Action:            aws.String("CREATE"),
+					ResourceRecordSet: createResourceRecordSet(*cname, hostname(*metadataIP)),
 				})
 				params := &route53.ChangeResourceRecordSetsInput{
 					ChangeBatch: &route53.ChangeBatch{
@@ -179,7 +183,6 @@ func main() {
 					// A non-service error occurred.
 					panic(err)
 				}
-				// Pretty-print the response data.
 				fmt.Println(awsutil.StringValue(resp))
 			}
 		case "die":
@@ -187,19 +190,8 @@ func main() {
 			if isObservedContainer(docker, msg.ID, targetContainer) {
 				var changes []*route53.Change
 				changes = append(changes, &route53.Change{
-					Action: aws.String("DELETE"),
-					ResourceRecordSet: &route53.ResourceRecordSet{ // Required
-						Name: aws.String(*cname),
-						Type: aws.String("CNAME"),
-						ResourceRecords: []*route53.ResourceRecord{
-							&route53.ResourceRecord{
-								Value: aws.String(hostname(*metadataIP)),
-							},
-						},
-						SetIdentifier: aws.String(hostname(*metadataIP)),
-						TTL:           aws.Long(5),
-						Weight:        aws.Long(50),
-					},
+					Action:            aws.String("DELETE"),
+					ResourceRecordSet: createResourceRecordSet(*cname, hostname(*metadataIP)),
 				})
 				params := &route53.ChangeResourceRecordSetsInput{
 					ChangeBatch: &route53.ChangeBatch{
