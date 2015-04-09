@@ -2,15 +2,17 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/creack/goamz/route53"
+	"github.com/awslabs/aws-sdk-go/aws"
+	"github.com/awslabs/aws-sdk-go/aws/awsutil"
+	"github.com/awslabs/aws-sdk-go/service/route53"
 	dockerapi "github.com/fsouza/go-dockerclient"
-	"github.com/mitchellh/goamz/aws"
 )
 
 func getopt(name, def string) string {
@@ -40,18 +42,6 @@ func hostname(metadataServerAddress string) (hostname string) {
 	return string(body)
 }
 
-func createModifyResourceRecordsReq(action string, recordSet route53.ResourceRecordSet) (req *route53.ChangeResourceRecordSetsRequest) {
-	return &route53.ChangeResourceRecordSetsRequest{
-		Comment: "Test",
-		Changes: []route53.Change{
-			route53.Change{
-				Action: action,
-				Record: recordSet,
-			},
-		},
-	}
-}
-
 //container names start with a /
 func normalizedContainerName(original string) (normalized string) {
 	if strings.HasPrefix("/", original) {
@@ -70,17 +60,29 @@ func isObservedContainer(client *dockerapi.Client, containerId string, targetCon
 	return false
 }
 
-func recordExists(client *route53.Route53, zone string, recordName string) (record *route53.ResourceRecordSet, err error) {
-	resources, err := client.ListResourceRecordSets(zone, nil)
-	for _, route := range resources.Records {
+func findMatchingResourceRecords(client *route53.Route53, zone string, setName string) (recordSet []*route53.ResourceRecordSet, err error) {
+	resources, err := client.ListResourceRecordSets(&route53.ListResourceRecordSetsInput{
+		HostedZoneID: aws.String(zone),
+	})
+	if awserr := aws.Error(err); awserr != nil {
+		// A service error occurred.
+		fmt.Println("Error:", awserr.Code, awserr.Message)
+		return nil, err
+	} else if err != nil {
+		// A non-service error occurred.
+		return nil, err
+	}
+	var matching []*route53.ResourceRecordSet
+	for _, route := range resources.ResourceRecordSets {
 		//FQDNs have a trailing dot. Check if that which has been provided
 		//matches the route, irrespective of the trailing dot
-		if strings.TrimRight(route.Name, ".") == strings.TrimRight(recordName, ".") {
-			log.Printf("Match Found")
-			return &route, nil
+		if strings.TrimRight(*route.Name, ".") == strings.TrimRight(setName, ".") {
+			fmt.Println("Found existing ResourceRecord Set with name ", strings.TrimRight(setName, "."))
+			fmt.Println(awsutil.StringValue(route))
+			matching = append(matching, route)
 		}
 	}
-	return nil, nil
+	return matching, nil
 }
 
 func main() {
@@ -96,6 +98,7 @@ func main() {
 	log.Println(*cname)
 	log.Println(*zoneId)
 	log.Println(*containerName)
+
 	docker, err := dockerapi.NewClient(getopt("DOCKER_HOST", "unix:///tmp/docker.sock"))
 	assert(err)
 	err = docker.Ping()
@@ -107,28 +110,35 @@ func main() {
 	events := make(chan *dockerapi.APIEvents)
 	assert(docker.AddEventListener(events))
 
-	//we're going for the either env or instance profile here
-	auth, err := aws.GetAuth("", "")
-	assert(err)
-	client := route53.New(auth, aws.Regions[*region])
+	client := route53.New(nil)
 
-	//check to see if the ResourceRecord exists already.
-	//if it does, then remove it
-	existingRecord, err := recordExists(client, *zoneId, *cname)
+	matchingResourceRecords, err := findMatchingResourceRecords(client, *zoneId, *cname)
 	if err != nil {
 		log.Fatalf("Failed:", err)
 	}
-	if existingRecord != nil {
-		log.Printf("Deleting existing Record")
-		_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
-			Name:    existingRecord.Name,
-			Type:    existingRecord.Type,
-			Records: existingRecord.Records,
-			TTL:     existingRecord.TTL,
-		}))
-		if err != nil {
-			log.Fatalf("Failed to delete existing record:", err)
+	fmt.Printf("Found %d existing records with a matching name. Destroying. \n", len(matchingResourceRecords))
+	if matchingResourceRecords != nil {
+		var changes []*route53.Change
+		for _, set := range matchingResourceRecords {
+			changes = append(changes, &route53.Change{
+				Action:            aws.String("DELETE"),
+				ResourceRecordSet: set,
+			})
 		}
+		params := &route53.ChangeResourceRecordSetsInput{
+			ChangeBatch: &route53.ChangeBatch{
+				Changes: changes,
+			},
+			HostedZoneID: aws.String(*zoneId),
+		}
+		resp, err := client.ChangeResourceRecordSets(params)
+		if awserr := aws.Error(err); awserr != nil {
+			fmt.Println("Error:", awserr.Code, awserr.Message)
+		} else if err != nil {
+			fmt.Println("Error removing existing records: ", err)
+			panic(err)
+		}
+		fmt.Println(awsutil.StringValue(resp))
 	}
 
 	log.Println("Listening for Docker events ...")
@@ -139,28 +149,74 @@ func main() {
 		case "start":
 			log.Println("docker start")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("CREATE", route53.ResourceRecordSet{
-					Name:          *cname,
-					Type:          "CNAME",
-					TTL:           5,
-					Records:       []string{hostname(*metadataIP)},
-					Weight:        50,
-					SetIdentifier: hostname(*metadataIP),
-				}))
-				assert(err)
+				var changes []*route53.Change
+				changes = append(changes, &route53.Change{
+					Action: aws.String("CREATE"),
+					ResourceRecordSet: &route53.ResourceRecordSet{ // Required
+						Name: aws.String(*cname),
+						Type: aws.String("CNAME"),
+						ResourceRecords: []*route53.ResourceRecord{
+							&route53.ResourceRecord{
+								Value: aws.String(hostname(*metadataIP)),
+							},
+						},
+						SetIdentifier: aws.String(hostname(*metadataIP)),
+						TTL:           aws.Long(5),
+						Weight:        aws.Long(50),
+					},
+				})
+				params := &route53.ChangeResourceRecordSetsInput{
+					ChangeBatch: &route53.ChangeBatch{
+						Changes: changes,
+					},
+					HostedZoneID: aws.String(*zoneId),
+				}
+				resp, err := client.ChangeResourceRecordSets(params)
+
+				if awserr := aws.Error(err); awserr != nil {
+					fmt.Println("Error:", awserr.Code, awserr.Message)
+				} else if err != nil {
+					// A non-service error occurred.
+					panic(err)
+				}
+				// Pretty-print the response data.
+				fmt.Println(awsutil.StringValue(resp))
 			}
 		case "die":
 			log.Println("docker die")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				_, err := client.ChangeResourceRecordSets(*zoneId, createModifyResourceRecordsReq("DELETE", route53.ResourceRecordSet{
-					Name:          *cname,
-					Type:          "CNAME",
-					TTL:           5,
-					Records:       []string{hostname(*metadataIP)},
-					Weight:        50,
-					SetIdentifier: hostname(*metadataIP),
-				}))
-				assert(err)
+				var changes []*route53.Change
+				changes = append(changes, &route53.Change{
+					Action: aws.String("DELETE"),
+					ResourceRecordSet: &route53.ResourceRecordSet{ // Required
+						Name: aws.String(*cname),
+						Type: aws.String("CNAME"),
+						ResourceRecords: []*route53.ResourceRecord{
+							&route53.ResourceRecord{
+								Value: aws.String(hostname(*metadataIP)),
+							},
+						},
+						SetIdentifier: aws.String(hostname(*metadataIP)),
+						TTL:           aws.Long(5),
+						Weight:        aws.Long(50),
+					},
+				})
+				params := &route53.ChangeResourceRecordSetsInput{
+					ChangeBatch: &route53.ChangeBatch{
+						Changes: changes,
+					},
+					HostedZoneID: aws.String(*zoneId),
+				}
+				resp, err := client.ChangeResourceRecordSets(params)
+
+				if awserr := aws.Error(err); awserr != nil {
+					fmt.Println("Error:", awserr.Code, awserr.Message)
+				} else if err != nil {
+					// A non-service error occurred.
+					panic(err)
+				}
+				// Pretty-print the response data.
+				fmt.Println(awsutil.StringValue(resp))
 			}
 		case "default":
 			log.Println(msg)
