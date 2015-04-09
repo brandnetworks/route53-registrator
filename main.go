@@ -100,6 +100,21 @@ func createResourceRecordSet(cname string, value string) (resourceRecordSet *rou
 	}
 }
 
+func resourceRecordSetRequest(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+	var changes []*route53.Change
+	changes = append(changes, &route53.Change{
+		Action:            aws.String(action),
+		ResourceRecordSet: createResourceRecordSet(cname, value),
+	})
+	params := &route53.ChangeResourceRecordSetsInput{
+		ChangeBatch: &route53.ChangeBatch{
+			Changes: changes,
+		},
+		HostedZoneID: aws.String(zoneId),
+	}
+	return client.ChangeResourceRecordSets(params)
+}
+
 func main() {
 	var containerName = flag.String("container", "docker-registry", "The container to watch")
 	var metadataIP = flag.String("metadata", "169.254.169.254", "The address of the metadata service")
@@ -164,19 +179,7 @@ func main() {
 		case "start":
 			log.Println("docker start")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				var changes []*route53.Change
-				changes = append(changes, &route53.Change{
-					Action:            aws.String("CREATE"),
-					ResourceRecordSet: createResourceRecordSet(*cname, hostname(*metadataIP)),
-				})
-				params := &route53.ChangeResourceRecordSetsInput{
-					ChangeBatch: &route53.ChangeBatch{
-						Changes: changes,
-					},
-					HostedZoneID: aws.String(*zoneId),
-				}
-				resp, err := client.ChangeResourceRecordSets(params)
-
+				resp, err := resourceRecordSetRequest(client, "CREATE", *zoneId, *cname, hostname(*metadataIP))
 				if awserr := aws.Error(err); awserr != nil {
 					fmt.Println("Error:", awserr.Code, awserr.Message)
 				} else if err != nil {
@@ -188,26 +191,13 @@ func main() {
 		case "die":
 			log.Println("docker die")
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				var changes []*route53.Change
-				changes = append(changes, &route53.Change{
-					Action:            aws.String("DELETE"),
-					ResourceRecordSet: createResourceRecordSet(*cname, hostname(*metadataIP)),
-				})
-				params := &route53.ChangeResourceRecordSetsInput{
-					ChangeBatch: &route53.ChangeBatch{
-						Changes: changes,
-					},
-					HostedZoneID: aws.String(*zoneId),
-				}
-				resp, err := client.ChangeResourceRecordSets(params)
-
+				resp, err := resourceRecordSetRequest(client, "DELETE", *zoneId, *cname, hostname(*metadataIP))
 				if awserr := aws.Error(err); awserr != nil {
 					fmt.Println("Error:", awserr.Code, awserr.Message)
 				} else if err != nil {
 					// A non-service error occurred.
 					panic(err)
 				}
-				// Pretty-print the response data.
 				fmt.Println(awsutil.StringValue(resp))
 			}
 		case "default":
