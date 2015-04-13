@@ -101,11 +101,10 @@ func createResourceRecordSet(cname string, value string) (resourceRecordSet *rou
 }
 
 func resourceRecordSetRequest(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
-	var changes []*route53.Change
-	changes = append(changes, &route53.Change{
+	changes := []*route53.Change{&route53.Change{
 		Action:            aws.String(action),
 		ResourceRecordSet: createResourceRecordSet(cname, value),
-	})
+	}}
 	params := &route53.ChangeResourceRecordSetsInput{
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: changes,
