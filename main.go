@@ -85,8 +85,9 @@ func findMatchingResourceRecords(client *route53.Route53, zone string, setName s
 	return matching, nil
 }
 
-//Given a CNAME and a value, create a AWS Resource Record Set with CNAME -> Value.
-func createResourceRecordSet(cname string, value string) (resourceRecordSet *route53.ResourceRecordSet) {
+//Creates a ResourceRecordSet with a default TTL and Weight.
+//The SetIdentifier mets the Value
+func WeightedCNAMEForValue(cname string, value string) (resourceRecordSet *route53.ResourceRecordSet) {
 	return &route53.ResourceRecordSet{
 		Name: aws.String(cname),
 		Type: aws.String("CNAME"),
@@ -101,10 +102,11 @@ func createResourceRecordSet(cname string, value string) (resourceRecordSet *rou
 	}
 }
 
-func resourceRecordSetRequest(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+//Creates the necessary params for a ChangeResourceRecordRequest
+func paramsForChangeResourceRecordRequest(client *route53.Route53, action string, zoneId string, resourceRecordSet *route53.ResourceRecordSet) route53.ChangeResourceRecordSetsInput {
 	changes := []*route53.Change{&route53.Change{
 		Action:            aws.String(action),
-		ResourceRecordSet: createResourceRecordSet(cname, value),
+		ResourceRecordSet: resourceRecordSet,
 	}}
 	params := &route53.ChangeResourceRecordSetsInput{
 		ChangeBatch: &route53.ChangeBatch{
@@ -112,7 +114,45 @@ func resourceRecordSetRequest(client *route53.Route53, action string, zoneId str
 		},
 		HostedZoneID: aws.String(zoneId),
 	}
-	return client.ChangeResourceRecordSets(params)
+	return *params
+}
+
+//Defines a Route53 request for a CNAME
+type requestFn func(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
+
+//Executes the ChangeResourceRecordSet
+func route53ChangeRequest(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+	resourceRecordSet := WeightedCNAMEForValue(cname, value)
+	params := paramsForChangeResourceRecordRequest(client, action, zoneId, resourceRecordSet)
+	return client.ChangeResourceRecordSets(&params)
+}
+
+//A closure that consumes a requestFn as a parameter
+//and returns a requestFn that handles errors resulting
+//from it's execution
+func ErrorHandledRequestFn(reqFn requestFn) (wrapped requestFn) {
+	return func(route53Client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+		resp, err = reqFn(route53Client, action, zoneId, cname, value)
+		if awserr := aws.Error(err); awserr != nil {
+			glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
+			return nil, err
+		} else if err != nil {
+			// A non-service error occurred.
+			glog.Errorf("Error occured creating records: \n %s", err)
+			return nil, err
+		}
+		glog.Infof("Response received for request: \n %s", awsutil.StringValue(resp))
+		return resp, nil
+	}
+}
+
+//I'm not sure Rob Pike would approve of this, but here's a sort of currying
+type requestFnForZoneClient func(action string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
+
+func requestFnForClientZone(client *route53.Route53, zoneId string, fn requestFn) (curried requestFnForZoneClient) {
+	return func(action string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+		return fn(client, action, zoneId, cname, value)
+	}
 }
 
 func main() {
@@ -143,7 +183,10 @@ func main() {
 
 	client := route53.New(nil)
 
-	matchingResourceRecords, err := findMatchingResourceRecords(client, *zoneId, *cname)
+
+	weightedCNAMEFn := ErrorHandledRequestFn(route53ChangeRequest)
+	weightedRequestForClientZone := requestFnForClientZone(client, *zoneId, weightedCNAMEFn)
+
 	if err != nil {
 		glog.Errorf("Error searching for exisiting records:", err)
 	}
@@ -178,30 +221,14 @@ func main() {
 	for msg := range events {
 		switch msg.Status {
 		case "start":
-			glog.Infof("Event: container %s died", msg.ID)
+			glog.Infof("Event: container %s started", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				resp, err := resourceRecordSetRequest(client, "CREATE", *zoneId, *cname, hostname(*metadataIP))
-				if awserr := aws.Error(err); awserr != nil {
-					glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
-				} else if err != nil {
-					// A non-service error occurred.
-					glog.Errorf("Error occured creating records: \n %s", err)
-					panic(err)
-				}
-				glog.Infof("Response: \n: %s", awsutil.StringValue(resp))
+				weightedRequestForClientZone("CREATE", *cname, hostname(*metadataIP))
 			}
 		case "die":
 			glog.Infof("Event: container %s died.", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				resp, err := resourceRecordSetRequest(client, "DELETE", *zoneId, *cname, hostname(*metadataIP))
-				if awserr := aws.Error(err); awserr != nil {
-					glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
-				} else if err != nil {
-					// A non-service error occurred.
-					glog.Errorf("Error occured creating records: \n %s", err)
-					panic(err)
-				}
-				glog.Infof("Response: \n: %s", awsutil.StringValue(resp))
+				weightedRequestForClientZone("DELETE", *cname, hostname(*metadataIP))
 			}
 		case "default":
 			glog.Infof("Event: container %s ignoring", msg.ID)
