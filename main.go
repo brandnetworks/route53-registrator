@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -27,6 +28,25 @@ func assert(err error) {
 	}
 }
 
+func containerIsRunning(client *dockerapi.Client, containerName string) (running bool, err error) {
+	//defaults to only the running containers
+	containers, err := client.ListContainers(dockerapi.ListContainersOptions{})
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, container := range containers {
+		for _, name := range container.Names {
+			fmt.Println(normalizedContainerName(name), normalizedContainerName(containerName))
+			if normalizedContainerName(name) == normalizedContainerName(containerName) {
+				found = true
+				break
+			}
+		}
+	}
+	return found, nil
+}
+
 //uses the ec2 metadata service to retrieve the public
 //cname for the instance
 func hostname(metadataServerAddress string) (hostname string) {
@@ -43,7 +63,7 @@ func hostname(metadataServerAddress string) (hostname string) {
 
 //container names start with a /. This function removes the leading / if it exists.
 func normalizedContainerName(original string) (normalized string) {
-	if strings.HasPrefix("/", original) {
+	if strings.HasPrefix(original, "/") {
 		return original
 	}
 	return strings.Join([]string{"/", original}, "")
@@ -61,7 +81,7 @@ func isObservedContainer(client *dockerapi.Client, containerId string, targetCon
 }
 
 //Find all resource records in a AWS Hosted Zone that match a given name.
-func findMatchingResourceRecords(client *route53.Route53, zone string, setName string) (recordSet []*route53.ResourceRecordSet, err error) {
+func findMatchingResourceRecordsByName(client *route53.Route53, zone string, setName string) (recordSet []*route53.ResourceRecordSet, err error) {
 	resources, err := client.ListResourceRecordSets(&route53.ListResourceRecordSetsInput{
 		HostedZoneID: aws.String(zone),
 	})
@@ -78,7 +98,6 @@ func findMatchingResourceRecords(client *route53.Route53, zone string, setName s
 		//FQDNs have a trailing dot. Check if that which has been provided
 		//matches the route, irrespective of the trailing dot
 		if strings.TrimRight(*route.Name, ".") == strings.TrimRight(setName, ".") {
-			glog.Infof("Found existing ResourceRecord Set with name ", strings.TrimRight(setName, "."))
 			matching = append(matching, route)
 		}
 	}
@@ -180,39 +199,37 @@ func main() {
 
 	events := make(chan *dockerapi.APIEvents)
 	assert(docker.AddEventListener(events))
-
 	client := route53.New(nil)
-
 
 	weightedCNAMEFn := ErrorHandledRequestFn(route53ChangeRequest)
 	weightedRequestForClientZone := requestFnForClientZone(client, *zoneId, weightedCNAMEFn)
 
+	//check if the named container is alive on the host
+	running, err := containerIsRunning(docker, *containerName)
 	if err != nil {
-		glog.Errorf("Error searching for exisiting records:", err)
+		glog.Errorf("Error checking for existing container: %s", err)
 	}
-	glog.Infof("Found %d existing records with a matching name. Destroying. \n", len(matchingResourceRecords))
-	if matchingResourceRecords != nil {
-		var changes []*route53.Change
-		for _, set := range matchingResourceRecords {
-			changes = append(changes, &route53.Change{
-				Action:            aws.String("DELETE"),
-				ResourceRecordSet: set,
-			})
+
+	//if the container is running, then check if there is an existing record pointing
+	//to this host. If there is not, then create one
+	if running {
+		matchingResourceRecords, err := findMatchingResourceRecordsByName(client, *zoneId, *cname)
+		exists := false
+		for _, recordSet := range matchingResourceRecords {
+			for _, record := range recordSet.ResourceRecords {
+				if *record.Value == hostname(*metadataIP) {
+					glog.Infof("Found record with Name %s and value %s", *cname, hostname(*metadataIP))
+					exists = true
+				}
+			}
 		}
-		params := &route53.ChangeResourceRecordSetsInput{
-			ChangeBatch: &route53.ChangeBatch{
-				Changes: changes,
-			},
-			HostedZoneID: aws.String(*zoneId),
+		if !exists {
+			glog.Infof("No record exists with Name %s and value %s. Creating.", *cname, hostname(*metadataIP))
+			weightedRequestForClientZone("CREATE", *cname, hostname(*metadataIP))
 		}
-		resp, err := client.ChangeResourceRecordSets(params)
-		if awserr := aws.Error(err); awserr != nil {
-			glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
-		} else if err != nil {
-			glog.Errorf("Error removing existing records: ", err)
-			panic(err)
+		if err != nil {
+			glog.Errorf("Error searching for exisiting records:", err)
 		}
-		glog.Infof("Response from removing existing records: \n %+v", awsutil.StringValue(resp))
 	}
 
 	glog.Infof("Listening for Docker events ...")
