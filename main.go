@@ -13,6 +13,8 @@ import (
 	"github.com/awslabs/aws-sdk-go/service/route53"
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
+
+	"github.com/brandnetworks/route53-registrator/healthcheck"
 )
 
 func getopt(name, def string) string {
@@ -105,7 +107,7 @@ func findMatchingResourceRecordsByName(client *route53.Route53, zone string, set
 }
 
 //Creates a ResourceRecordSet with a default TTL and Weight.
-//The SetIdentifier mets the Value
+//The SetIdentifier equals the the hostname of the server.
 func WeightedCNAMEForValue(cname string, value string) (resourceRecordSet *route53.ResourceRecordSet) {
 	return &route53.ResourceRecordSet{
 		Name: aws.String(cname),
@@ -137,10 +139,10 @@ func paramsForChangeResourceRecordRequest(client *route53.Route53, action string
 }
 
 //Defines a Route53 request for a CNAME
-type requestFn func(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
+type requestFn func(client *route53.Route53, action string, zoneId string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
 
 //Executes the ChangeResourceRecordSet
-func route53ChangeRequest(client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+func route53ChangeRequest(client *route53.Route53, action string, healthcheckId string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
 	resourceRecordSet := WeightedCNAMEForValue(cname, value)
 	params := paramsForChangeResourceRecordRequest(client, action, zoneId, resourceRecordSet)
 	return client.ChangeResourceRecordSets(&params)
@@ -150,8 +152,8 @@ func route53ChangeRequest(client *route53.Route53, action string, zoneId string,
 //and returns a requestFn that handles errors resulting
 //from it's execution
 func ErrorHandledRequestFn(reqFn requestFn) (wrapped requestFn) {
-	return func(route53Client *route53.Route53, action string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
-		resp, err = reqFn(route53Client, action, zoneId, cname, value)
+	return func(route53Client *route53.Route53, action string, zoneId string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+		resp, err = reqFn(route53Client, action, zoneId, healthcheckId, cname, value)
 		if awserr := aws.Error(err); awserr != nil {
 			glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
 			return nil, err
@@ -166,11 +168,11 @@ func ErrorHandledRequestFn(reqFn requestFn) (wrapped requestFn) {
 }
 
 //I'm not sure Rob Pike would approve of this, but here's a sort of currying
-type requestFnForZoneClient func(action string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
+type requestFnForZoneClient func(action string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
 
 func requestFnForClientZone(client *route53.Route53, zoneId string, fn requestFn) (curried requestFnForZoneClient) {
-	return func(action string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
-		return fn(client, action, zoneId, cname, value)
+	return func(action string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+		return fn(client, action, zoneId, healthcheckId, cname, value)
 	}
 }
 
@@ -210,6 +212,22 @@ func main() {
 		glog.Errorf("Error checking for existing container: %s", err)
 	}
 
+	//check there is a healthcheck that exists for this hostname
+	exists, healthCheckFqdn, err := healthcheck.HealthCheckForFQDNPort(client, hostname(*metadataIP), aws.Long(1000))
+	if err != nil {
+		glog.Errorf("Error checking for existing health check: %s", err)
+	}
+	//create one if there isn't
+	if !exists {
+		glog.Infof("No healthcheck found for endpoint. Creating.")
+		healthCheckFqdn, err = healthcheck.CreateHealthCheck(client, aws.String(hostname(*metadataIP)), 1000, aws.String("/v1/_ping"), aws.String(hostname(*metadataIP)))
+		if err != nil {
+			glog.Errorf("Error creating health check: %s", err)
+		}
+	} else {
+		glog.Infof("Found a matching health check for FQDN %s and port %d", hostname(*metadataIP), 1000)
+	}
+
 	//if the container is running, then check if there is an existing record pointing
 	//to this host. If there is not, then create one
 	if running {
@@ -225,7 +243,7 @@ func main() {
 		}
 		if !exists {
 			glog.Infof("No record exists with Name %s and value %s. Creating.", *cname, hostname(*metadataIP))
-			weightedRequestForClientZone("CREATE", *cname, hostname(*metadataIP))
+			weightedRequestForClientZone("CREATE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
 		}
 		if err != nil {
 			glog.Errorf("Error searching for exisiting records:", err)
@@ -240,12 +258,13 @@ func main() {
 		case "start":
 			glog.Infof("Event: container %s started", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				weightedRequestForClientZone("CREATE", *cname, hostname(*metadataIP))
+				weightedRequestForClientZone("CREATE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
 			}
 		case "die":
 			glog.Infof("Event: container %s died.", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
-				weightedRequestForClientZone("DELETE", *cname, hostname(*metadataIP))
+				weightedRequestForClientZone("DELETE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
+				//delete the health check, too
 			}
 		case "default":
 			glog.Infof("Event: container %s ignoring", msg.ID)
