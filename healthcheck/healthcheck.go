@@ -14,11 +14,6 @@ type HealthCheckFQDN struct {
 	HealthCheckID string
 }
 
-type ResourceRecordHealthCheck struct {
-	ResourceRecordSet route53.ResourceRecordSet
-	HealthCheck       route53.HealthCheck
-}
-
 //Creates the Config required for a health check, including some
 //default values
 func createHealthCheckInput(uniqueId *string, fqdn *string, port int64, resourcepath *string) (input *route53.CreateHealthCheckInput, err error) {
