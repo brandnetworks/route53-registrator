@@ -217,6 +217,7 @@ func main() {
 	if err != nil {
 		glog.Errorf("Error checking for existing health check: %s", err)
 	}
+
 	//create one if there isn't
 	if !exists {
 		glog.Infof("No healthcheck found for endpoint. Creating.")
@@ -229,7 +230,7 @@ func main() {
 	}
 
 	//if the container is running, then check if there is an existing record pointing
-	//to this host. If there is not, then create one
+	//to this host. If there is not, then create one.
 	if running {
 		matchingResourceRecords, err := findMatchingResourceRecordsByName(client, *zoneId, *cname)
 		exists := false
