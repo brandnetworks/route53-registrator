@@ -84,47 +84,6 @@ func CreateHealthCheck(client *route53.Route53, hostname *string, port int64, re
 	}, nil
 }
 
-//Given a set of resource record sets, find all the health checks that haven't
-//passed recently. If they're older than 30 seconds, then delete them
-func FindFailingHealthChecks(client *route53.Route53, identifier string) (checks []*route53.HealthCheck, err error) {
-	resp, _ := getHealthChecks(client)
-	var failing []*route53.HealthCheck
-	for _, check := range resp.HealthChecks {
-		//get the tags
-		listTagsResp, _ := getTagsForHealthCheck(client, check.ID)
-		//find the tag with the expected key, and check it's value
-		for _, tag := range listTagsResp.ResourceTagSet.Tags {
-			if *tag.Key == "route53-registrator" {
-				//if the healthcheck is managed by *this* registrator (identified by a tag on the health check), then add it to the list of the failing health checks
-				if *tag.Value == identifier {
-					resp, err := client.GetHealthCheckStatus(&route53.GetHealthCheckStatusInput{
-						HealthCheckID: check.ID,
-					})
-					if awserr := aws.Error(err); awserr != nil {
-						// A service error occurred.
-						glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
-						panic(err)
-					} else if err != nil {
-						// A non-service error occurred.
-						glog.Errorf("Error occured finding healthcheck status: \n %s", err)
-						panic(err)
-					}
-					for _, observation := range resp.HealthCheckObservations {
-						if strings.Contains(*observation.StatusReport.Status, "Failure") {
-							//only return those that have been unhealthy for 30 seconds
-							if observation.StatusReport.CheckedTime.Before(time.Now().Add(time.Duration(30) * time.Second)) {
-								glog.Infof("Healthcheck with matching tag failed over 30 seconds ago: ", *observation.StatusReport.Status)
-								failing = append(failing, check)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return failing, nil
-}
-
 func getHealthChecks(client *route53.Route53) (out route53.ListHealthChecksOutput, err error) {
 	resp, err := client.ListHealthChecks(&route53.ListHealthChecksInput{})
 	if awserr := aws.Error(err); awserr != nil {
