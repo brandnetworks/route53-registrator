@@ -46,8 +46,6 @@ func HealthCheckForFQDNPort(client *route53.Route53, fqdn string, port *int64) (
 	//per fqdn/port
 	for _, healthcheck := range resp.HealthChecks {
 		config := healthcheck.HealthCheckConfig
-		glog.Infof("%v", *config.FullyQualifiedDomainName)
-		glog.Infof("%v", fqdn)
 		if *config.FullyQualifiedDomainName == fqdn {
 			if *config.Port == *port {
 				return true, HealthCheckFQDN{
