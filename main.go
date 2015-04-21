@@ -277,7 +277,6 @@ func main() {
 				if err != nil {
 					glog.Errorf("Error deleting route")
 				}
-				//don't pass the healthcheck id here; the record should be deleted even if the healthcheck doesn't exist
 				exists, err := recordExists(client, *zoneId, *cname, hostname(*metadataIP))
 				if err != nil {
 					glog.Errorf("Error checking for existing container: %v", err)
