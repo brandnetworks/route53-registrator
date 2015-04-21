@@ -140,7 +140,7 @@ func paramsForChangeResourceRecordRequest(client *route53.Route53, action string
 type requestFn func(client *route53.Route53, action string, zoneId string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error)
 
 //Executes the ChangeResourceRecordSet
-func route53ChangeRequest(client *route53.Route53, action string, healthcheckId string, zoneId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
+func route53ChangeRequest(client *route53.Route53, action string, zoneId string, healthcheckId string, cname string, value string) (resp *route53.ChangeResourceRecordSetsOutput, err error) {
 	resourceRecordSet := WeightedCNAMEForValue(cname, value)
 	params := paramsForChangeResourceRecordRequest(client, action, zoneId, resourceRecordSet)
 	return client.ChangeResourceRecordSets(&params)
@@ -180,7 +180,7 @@ func main() {
 	var region = flag.String("region", "us-east-1", "The region for route53 records")
 	var zoneId = flag.String("zone", "Z1P7DHMHEAX6O3", "The route53 hosted zone id")
 	var cname = flag.String("cname", "my-test-registry.realtime.bnservers.com", "The CNAME for the record set")
-	var healthCheckPort = flag.Int64("healthcheckport", 1000, "The port to run the healthcheck on")
+	var healthCheckPort = flag.Int64("healthCheckPort", 1000, "The port to run the healthcheck on")
 	var healthCheckEndpoint = flag.String("healthCheckEndpoint", "/status", "The status URL")
 
 	//Print some debug information
@@ -206,12 +206,6 @@ func main() {
 	weightedCNAMEFn := ErrorHandledRequestFn(route53ChangeRequest)
 	weightedRequestForClientZone := requestFnForClientZone(client, *zoneId, weightedCNAMEFn)
 
-	//check if the named container is alive on the host
-	running, err := containerIsRunning(docker, *containerName)
-	if err != nil {
-		glog.Errorf("Error checking for existing container: %s", err)
-	}
-
 	//check there is a healthcheck that exists for this hostname
 	exists, healthCheckFqdn, err := healthcheck.HealthCheckForFQDNPort(client, hostname(*metadataIP), healthCheckPort)
 	if err != nil {
@@ -226,24 +220,31 @@ func main() {
 			glog.Errorf("Error creating health check: %s", err)
 		}
 	} else {
-		glog.Infof("Found a matching health check for FQDN %s and port %d", hostname(*metadataIP), healthCheckPort)
+		glog.Infof("Found a matching health check for FQDN %s and port %v", hostname(*metadataIP), *healthCheckPort)
+	}
+
+	//check if the named container is alive on the host
+	running, err := containerIsRunning(docker, *containerName)
+	if err != nil {
+		glog.Errorf("Error checking for existing container: %s", err)
 	}
 
 	//if the container is running, then check if there is an existing record pointing
 	//to this host. If there is not, then create one.
 	if running {
+		glog.Infof("Container with name %s is already running. Checking for existing record", *containerName)
 		matchingResourceRecords, err := findMatchingResourceRecordsByName(client, *zoneId, *cname)
 		exists := false
 		for _, recordSet := range matchingResourceRecords {
 			for _, record := range recordSet.ResourceRecords {
 				if *record.Value == hostname(*metadataIP) {
-					glog.Infof("Found record with Name %s and value %s", *cname, hostname(*metadataIP))
+					glog.Infof("Found record with Name %s and value %s. Record already exists", *cname, hostname(*metadataIP))
 					exists = true
 				}
 			}
 		}
 		if !exists {
-			glog.Infof("No record exists with Name %s and value %s. Creating.", *cname, hostname(*metadataIP))
+			glog.Infof("No existing record exists with Name %s and value %s. Creating.", *cname, hostname(*metadataIP))
 			weightedRequestForClientZone("CREATE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
 		}
 		if err != nil {
@@ -257,12 +258,12 @@ func main() {
 	for msg := range events {
 		switch msg.Status {
 		case "start":
-			glog.Infof("Event: container %s started", msg.ID)
+			glog.Infof("Event: container %s started. Creating record and Health Check", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
 				weightedRequestForClientZone("CREATE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
 			}
 		case "die":
-			glog.Infof("Event: container %s died.", msg.ID)
+			glog.Infof("Event: container %s died. Deleting Record and Health Check", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
 				weightedRequestForClientZone("DELETE", healthCheckFqdn.HealthCheckID, *cname, hostname(*metadataIP))
 				//delete the health check, too
