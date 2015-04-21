@@ -283,6 +283,7 @@ func main() {
 				}
 				if exists {
 					weightedRequestForClientZone("DELETE", healthCheckId, *cname, hostname(*metadataIP))
+					healthcheck.DeleteHealthCheck(client, healthCheckId)
 				} else {
 					glog.Infof("Suitable record doesn't exist. Not deleting")
 				}

@@ -5,8 +5,6 @@ import (
 	"github.com/awslabs/aws-sdk-go/service/route53"
 	"github.com/golang/glog"
 	"github.com/nu7hatch/gouuid"
-	"strings"
-	"time"
 )
 
 type HealthCheckFQDN struct {
@@ -131,4 +129,19 @@ func CreateHealthCheckIfMissing(client *route53.Route53, fqdn string, port int64
 	}
 	glog.Infof("Found a matching health check for FQDN %s and port %v", fqdn, port)
 	return healthCheckFqdn.HealthCheckID, nil
+}
+
+func DeleteHealthCheck(client *route53.Route53, healthCheckId string) (err error) {
+	_, err = client.DeleteHealthCheck(&route53.DeleteHealthCheckInput{
+		HealthCheckID: aws.String(healthCheckId),
+	})
+	if awserr := aws.Error(err); awserr != nil {
+		// A service error occurred.
+		glog.Errorf("AWS Error: \n Code: %s \n Message: %s", awserr.Code, awserr.Message)
+		return err
+	} else if err != nil {
+		// A non-service error occurred.
+		return err
+	}
+	return nil
 }
