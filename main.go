@@ -182,6 +182,8 @@ func main() {
 	var region = flag.String("region", "us-east-1", "The region for route53 records")
 	var zoneId = flag.String("zone", "Z1P7DHMHEAX6O3", "The route53 hosted zone id")
 	var cname = flag.String("cname", "my-test-registry.realtime.bnservers.com", "The CNAME for the record set")
+	var healthCheckPort = flag.Int64("healthcheckport", 1000, "The port to run the healthcheck on")
+	var healthCheckEndpoint = flag.String("healthCheckEndpoint", "/status", "The status URL")
 
 	//Print some debug information
 	flag.Parse()
@@ -213,7 +215,7 @@ func main() {
 	}
 
 	//check there is a healthcheck that exists for this hostname
-	exists, healthCheckFqdn, err := healthcheck.HealthCheckForFQDNPort(client, hostname(*metadataIP), aws.Long(1000))
+	exists, healthCheckFqdn, err := healthcheck.HealthCheckForFQDNPort(client, hostname(*metadataIP), healthCheckPort)
 	if err != nil {
 		glog.Errorf("Error checking for existing health check: %s", err)
 	}
@@ -221,12 +223,12 @@ func main() {
 	//create one if there isn't
 	if !exists {
 		glog.Infof("No healthcheck found for endpoint. Creating.")
-		healthCheckFqdn, err = healthcheck.CreateHealthCheck(client, aws.String(hostname(*metadataIP)), 1000, aws.String("/v1/_ping"), aws.String(hostname(*metadataIP)))
+		healthCheckFqdn, err = healthcheck.CreateHealthCheck(client, aws.String(hostname(*metadataIP)), *healthCheckPort, healthCheckEndpoint, aws.String(hostname(*metadataIP)))
 		if err != nil {
 			glog.Errorf("Error creating health check: %s", err)
 		}
 	} else {
-		glog.Infof("Found a matching health check for FQDN %s and port %d", hostname(*metadataIP), 1000)
+		glog.Infof("Found a matching health check for FQDN %s and port %d", hostname(*metadataIP), healthCheckPort)
 	}
 
 	//if the container is running, then check if there is an existing record pointing
