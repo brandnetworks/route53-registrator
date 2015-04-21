@@ -38,7 +38,7 @@ func createHealthCheckInput(uniqueId *string, fqdn *string, port int64, resource
 }
 
 //given a domain name, check if it there is a healthcheck for it.
-func HealthCheckForFQDNPort(client *route53.Route53, fqdn string, port *int64) (exists bool, check HealthCheckFQDN, err error) {
+func HealthCheckForFQDNPort(client *route53.Route53, fqdn string, port int64) (exists bool, check HealthCheckFQDN, err error) {
 	resp, err := getHealthChecks(client)
 
 	//check if any of them contain the healthcheck.
@@ -47,7 +47,7 @@ func HealthCheckForFQDNPort(client *route53.Route53, fqdn string, port *int64) (
 	for _, healthcheck := range resp.HealthChecks {
 		config := healthcheck.HealthCheckConfig
 		if *config.FullyQualifiedDomainName == fqdn {
-			if *config.Port == *port {
+			if *config.Port == port {
 				return true, HealthCheckFQDN{
 					Fqdn:          *healthcheck.HealthCheckConfig.FullyQualifiedDomainName,
 					HealthCheckID: *healthcheck.ID,
@@ -154,4 +154,22 @@ func getTagsForHealthCheck(client *route53.Route53, healthcheckId *string) (out 
 		panic(err)
 	}
 	return *resp, nil
+}
+
+func CreateHealthCheckIfMissing(client *route53.Route53, fqdn string, port int64, endpoint string) (id string, err error) {
+	exists, healthCheckFqdn, err := HealthCheckForFQDNPort(client, fqdn, port)
+	if err != nil {
+		glog.Errorf("Error checking for existing health check: %s", err)
+	}
+	if !exists {
+		glog.Infof("No healthcheck found for endpoint. Creating.")
+		healthCheckFqdn, err = CreateHealthCheck(client, aws.String(fqdn), port, aws.String(endpoint), aws.String(fqdn))
+		if err != nil {
+			glog.Errorf("Error creating health check: %s", err)
+			return "", err
+		}
+		return healthCheckFqdn.HealthCheckID, nil
+	}
+	glog.Infof("Found a matching health check for FQDN %s and port %v", fqdn, port)
+	return healthCheckFqdn.HealthCheckID, nil
 }
