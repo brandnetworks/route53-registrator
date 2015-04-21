@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -39,7 +38,6 @@ func containerIsRunning(client *dockerapi.Client, containerName string) (running
 	found := false
 	for _, container := range containers {
 		for _, name := range container.Names {
-			fmt.Println(normalizedContainerName(name), normalizedContainerName(containerName))
 			if normalizedContainerName(name) == normalizedContainerName(containerName) {
 				found = true
 				break
