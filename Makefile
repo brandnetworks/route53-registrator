@@ -5,6 +5,7 @@ dev:
 		-e DOCKER_HOST=http://192.168.59.103:2375 \
 		-e AWS_ACCESS_KEY_ID=$(AWS_ACCESS_KEY_ID) \
 		-e AWS_SECRET_ACCESS_KEY=$(AWS_SECRET_ACCESS_KEY) \
+		-p 8080:8080 \
 		$(NAME) /bin/route53-registrator -metadata=192.168.59.103:5000 -container=test -zone=Z1P7DHMHEAX6O3 -cname=cluster-registry.realtime.bnservers.com -logtostderr=1 -healthCheckPort=1000 -healthCheckEndpoint=/status
 
 
