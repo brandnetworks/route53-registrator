@@ -20,7 +20,7 @@ func createHealthCheckInput(uniqueId *string, fqdn *string, port int64, resource
 		FullyQualifiedDomainName: fqdn,
 		RequestInterval:          aws.Long(10),
 		ResourcePath:             resourcepath,
-		Type:                     aws.String("HTTP"),
+		Type:                     aws.String("HTTPS"),
 		Port:                     aws.Long(port),
 	}
 
