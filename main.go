@@ -14,6 +14,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/brandnetworks/route53-registrator/healthcheck"
+	"github.com/brandnetworks/route53-registrator/status"
 )
 
 func getopt(name, def string) string {
@@ -246,6 +247,9 @@ func main() {
 	}
 
 	glog.Infof("Listening for Docker events ...")
+
+	//run a status server
+	go status.ServeStatus()
 
 	// Process Docker events
 	for msg := range events {
