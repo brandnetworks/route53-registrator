@@ -251,8 +251,9 @@ func main() {
 	for msg := range events {
 		switch msg.Status {
 		case "start":
-			glog.Infof("Event: container %s started. Creating record and Health Check", msg.ID)
+			glog.Infof("Event: container %s started. ", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
+				glog.Infof("Creating health check and CNAME")
 				healthCheckId, err := healthcheck.CreateHealthCheckIfMissing(client, hostname(*metadataIP), *healthCheckPort, *healthCheckEndpoint)
 				if err != nil {
 					glog.Errorf("Error deleting route")
@@ -271,8 +272,9 @@ func main() {
 				}
 			}
 		case "die":
-			glog.Infof("Event: container %s died. Deleting Record and Health Check", msg.ID)
+			glog.Infof("Event: container %s died.", msg.ID)
 			if isObservedContainer(docker, msg.ID, targetContainer) {
+				glog.Infof("Deleting health check and CNAME record.")
 				healthCheckId, err := healthcheck.CreateHealthCheckIfMissing(client, hostname(*metadataIP), *healthCheckPort, *healthCheckEndpoint)
 				if err != nil {
 					glog.Errorf("Error deleting route")
