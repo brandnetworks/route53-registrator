@@ -1,4 +1,4 @@
-NAME=rtux/route53-registrator
+NAME=brandnetworks/route53-registrator
 
 dev:
 	docker run \
@@ -20,8 +20,8 @@ stage/route53-registrator: build/route53-registrator
 	cp build/route53-registrator stage/route53-registrator
 
 release:
-	docker tag -f route53-registrator rtux/route53-registrator
-	docker push rtux/route53-registrator
+	docker tag -f route53-registrator brandnetworks/route53-registrator
+	docker push brandnetworks/route53-registrator
 
 .PHONY: clean build/container 
 clean:
