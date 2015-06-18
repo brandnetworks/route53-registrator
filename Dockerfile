@@ -1,6 +1,8 @@
-FROM gliderlabs/alpine
+FROM ubuntu:14.04
 
-ADD ./stage/route53-registrator /bin/route53-registrator
-ADD ca-bundle.crt /etc/ssl/ca-bundle.pem
+WORKDIR /
+CMD ["/run.sh"]
 
-CMD ["/bin/route53-registrator"]
+ADD run.sh /run.sh
+ADD trigger.sh /trigger.sh
+
