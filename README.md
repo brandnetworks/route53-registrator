@@ -9,3 +9,9 @@ To build, run the following.
 docker build -t brandnetworks/route53-registrator .
 ```
 
+Running this image requires four arguments.
+
+```
+docker run brandnetworks/route53-registrator image region hosted_zone_id domain
+```
+
