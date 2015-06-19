@@ -11,21 +11,19 @@ while read line; do
 	if [[ "$line" == *"start"* ]]; then
 		cat >$change_batch <<EOL
 		{
-			"Changes": {
+			"Changes": [{
 				"Action": "UPSERT",
 				"ResourceRecordSet": {
 					"Name": "${domain}.",
 					"Weight": 50,
 					"Type": "CNAME",
-					"ResourceRecords": [
-						{
-							"Value": "${public_hostname}"
-						}
-					],
+					"ResourceRecords": [{
+						"Value": "${public_hostname}"
+					}],
 					"TTL": 5,
 					"SetIdentifier": "${domain}"
 				}
-			}
+			}]
 		}
 EOL
 		echo "$image started"
@@ -33,17 +31,19 @@ EOL
 	elif [[ "$line" == *"die"* ]]; then
 		cat >$change_batch <<EOL2
 		{
-			"Changes": {
+			"Changes": [{
 				"Action": "UPSERT",
 				"ResourceRecordSet": {
 					"Name": "${domain}.",
 					"Weight": 50,
 					"Type": "CNAME",
-					"ResourceRecords": [],
+					"ResourceRecords": [{
+						"Value": ""
+					}],
 					"TTL": 5,
 					"SetIdentifier": "${domain}"
 				}
-			}
+			}]
 		}
 EOL2
 		echo "$image stopped"
