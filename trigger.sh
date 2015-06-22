@@ -32,15 +32,15 @@ EOL
 		cat >$change_batch <<EOL2
 		{
 			"Changes": [{
-				"Action": "UPSERT",
+				"Action": "DELETE",
 				"ResourceRecordSet": {
 					"Name": "${domain}.",
 					"Weight": 50,
 					"Type": "CNAME",
-					"ResourceRecords": [{
-						"Value": ""
-					}],
 					"TTL": 5,
+					"ResourceRecords": [{
+						"Value": "${public_hostname}"
+					}],
 					"SetIdentifier": "${domain}"
 				}
 			}]

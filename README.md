@@ -12,6 +12,6 @@ docker build -t brandnetworks/route53-registrator .
 Running this image requires four arguments.
 
 ```
-docker run brandnetworks/route53-registrator image region hosted_zone_id domain
+docker run --name registrator -v /var/run:/var/run:rw -v /sys:/sys:ro -v /var/lib/docker/:/var/lib/docker:ro brandnetworks/route53-registrator image region hosted_zone_id domain
 ```
 
